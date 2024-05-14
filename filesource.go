@@ -231,7 +231,7 @@ func (e retryableError) Error() string { return e.error.Error() }
 func (e retryableError) Unwrap() error { return e.error }
 func isRetryable(err error) bool       { _, ok := err.(retryableError); return ok }
 
-func (s *FileSource) streamReader(blockReader BlockReader, prevLastBlockRead BlockRef, output chan *PreprocessedBlock) (lastBlockRead BlockRef, err error) {
+func (s *FileSource) streamReader(blockReader BlockReader, prevLastBlockRead BlockRef, output chan *PreprocessedBlock) (err error) {
 	var previousLastBlockPassed bool
 	if prevLastBlockRead == nil {
 		previousLastBlockPassed = true
@@ -260,8 +260,6 @@ func (s *FileSource) streamReader(blockReader BlockReader, prevLastBlockRead Blo
 					case <-s.Terminating():
 						return
 					case output <- preprocessBlock:
-						zlog.Debug("got preprocessor result", zap.Stringer("block_ref", preprocessBlock.Block))
-						lastBlockRead = preprocessBlock.Block.AsRef()
 					}
 				}
 			}
@@ -277,7 +275,7 @@ func (s *FileSource) streamReader(blockReader BlockReader, prevLastBlockRead Blo
 		blk, err = blockReader.Read()
 		if err != nil && err != io.EOF {
 			close(preprocessed)
-			return lastBlockRead, retryableError{err} // unexpected error
+			return err
 		}
 
 		if err == io.EOF && (blk == nil || blk.Num() == 0) {
@@ -313,7 +311,7 @@ func (s *FileSource) streamReader(blockReader BlockReader, prevLastBlockRead Blo
 	}
 
 	<-done
-	return lastBlockRead, nil
+	return nil
 }
 
 func (s *FileSource) preprocess(block *Block, out chan *PreprocessedBlock) {
@@ -340,35 +338,27 @@ func (s *FileSource) streamIncomingFile(newIncomingFile *incomingBlocksFile, blo
 	defer atomic.AddInt64(&currentOpenFiles, -1)
 
 	var skipBlocksBefore BlockRef
-	attempt := 0
-	for {
-		reader, err := blocksStore.OpenObject(context.Background(), newIncomingFile.filename)
-		if err != nil {
-			return fmt.Errorf("fetching %s from block store: %w", newIncomingFile.filename, err)
-		}
 
-		blockReader, err := s.blockReaderFactory.New(reader)
-		if err != nil {
-			reader.Close()
-			return fmt.Errorf("unable to create block reader: %w", err)
-		}
-
-		lastBlockRead, err := s.streamReader(blockReader, skipBlocksBefore, newIncomingFile.blocks)
-		reader.Close()
-		if err == nil || s.IsTerminating() {
-			return nil
-		}
-		if isRetryable(err) {
-			if attempt > 2 {
-				return fmt.Errorf("too many errors processing incoming file after %d attempts: %w", attempt+1, err)
-			}
-			zlog.Warn("reading file stream triggered an error", zap.Error(err))
-			attempt++
-			skipBlocksBefore = lastBlockRead
-			continue
-		}
-		return fmt.Errorf("non-retryable error processing incoming file: %w", err)
+	reader, err := blocksStore.OpenObject(context.Background(), newIncomingFile.filename)
+	if err != nil {
+		return fmt.Errorf("fetching %s from block store: %w", newIncomingFile.filename, err)
 	}
+	defer func() {
+		if err := reader.Close(); err != nil {
+			s.logger.Error("unable to close reader", zap.Error(err))
+		}
+	}()
+
+	blockReader, err := s.blockReaderFactory.New(reader)
+	if err != nil {
+		return fmt.Errorf("unable to create block reader: %w", err)
+	}
+
+	if err := s.streamReader(blockReader, skipBlocksBefore, newIncomingFile.blocks); err != nil {
+		return fmt.Errorf("error processing incoming file: %w", err)
+	}
+
+	return nil
 }
 
 func (s *FileSource) launchSink() {
