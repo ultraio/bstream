@@ -34,7 +34,6 @@ type Forkable struct {
 
 	ensureBlockFlows  bstream.BlockRef
 	ensureBlockFlowed bool
-	gateCursor        *Cursor
 
 	ensureAllBlocksTriggerLongestChain bool
 
@@ -231,85 +230,7 @@ func (p *Forkable) computeNewLongestChain(ppBlk *ForkableBlock) []*Block {
 
 }
 
-func (p *Forkable) feedCursorStateRestorer(blk *bstream.Block, obj interface{}) (err error) {
-
-	ppBlk := &ForkableBlock{Block: blk, Obj: obj}
-	previousRef := bstream.NewBlockRef(blk.PreviousID(), blk.Num()-1)
-	p.forkDB.AddLink(blk.AsRef(), previousRef, ppBlk)
-
-	// FIXME: eventually check if all of those are linked in a full segment ?
-	cur := p.gateCursor
-	if !p.forkDB.Exists(cur.HeadBlock.ID()) ||
-		!p.forkDB.Exists(cur.Block.ID()) ||
-		!p.forkDB.Exists(cur.LIB.ID()) {
-		if traceEnabled {
-			zlog.Debug("missing at least one block", zap.Stringer("cursor", cur))
-		}
-		return
-	}
-
-	p.gateCursor = nil
-	p.forkDB.InitLIB(cur.LIB)
-	p.lastLIBSeen = cur.LIB
-
-	switch cur.Step {
-	case StepNew, StepUndo:
-		var headBlock *ForkableBlock
-		for _, fobj := range p.forkDB.objects {
-			fblk := fobj.(*ForkableBlock)
-			if fblk.Block.Number < cur.Block.Num() {
-				fblk.SentAsNew = true // so they dont get sent again
-			}
-			if fblk.Block.ID() == cur.HeadBlock.ID() {
-				headBlock = fblk // we need this one
-			}
-			if fblk.Block.ID() == cur.Block.ID() {
-				fblk.SentAsNew = true
-				if cur.Step == StepNew {
-					p.lastBlockSent = fblk.Block
-				} else { // UNDO
-					p.lastBlockSent = p.forkDB.objects[fblk.Block.PreviousID()].(*ForkableBlock).Block
-				}
-			}
-		}
-		// we want the head block to 'come in as new'
-		if cur.HeadBlock.ID() != cur.Block.ID() {
-			p.forkDB.DeleteLink(cur.HeadBlock.ID())
-			return p.ProcessBlock(headBlock.Block, headBlock.Obj)
-		}
-		return
-	case StepIrreversible:
-		var headBlock *ForkableBlock
-		for _, fobj := range p.forkDB.objects {
-			fblk := fobj.(*ForkableBlock)
-			if fblk.Block.Number < cur.HeadBlock.Num() {
-				fblk.SentAsNew = true
-			}
-			if fblk.Block.ID() == cur.HeadBlock.ID() {
-				fblk.SentAsNew = true
-				headBlock = fblk
-			}
-		}
-		libRef := p.forkDB.BlockInCurrentChain(headBlock.Block, headBlock.Block.LibNum)
-		hasNew, irreversibleSegment, _ := p.forkDB.HasNewIrreversibleSegment(libRef)
-		if hasNew {
-			_ = p.forkDB.MoveLIB(libRef)
-			if err := p.processIrreversibleSegment(irreversibleSegment, headBlock.Block); err != nil {
-				return err
-			}
-		}
-		p.lastBlockSent = headBlock.Block
-		return
-	default:
-		return fmt.Errorf("unsupported cursor step %q", cur.Step)
-	}
-}
-
 func (p *Forkable) ProcessBlock(blk *bstream.Block, obj interface{}) error {
-	if p.gateCursor != nil {
-		return p.feedCursorStateRestorer(blk, obj)
-	}
-
 	if blk.Num() < p.forkDB.LIBNum() && p.lastBlockSent != nil {
 		return nil
 	}

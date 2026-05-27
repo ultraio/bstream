@@ -20,7 +20,6 @@ type Firehose struct {
 
 	handler bstream.Handler
 
-	cursor    *forkable.Cursor
 	forkSteps forkable.StepType
 	tracker   *bstream.Tracker
 
@@ -65,12 +64,6 @@ func WithConfirmations(confirmations uint64) Option {
 func WithForkableSteps(steps forkable.StepType) Option {
 	return func(f *Firehose) {
 		f.forkSteps = steps
-	}
-}
-
-func WithCursor(cursor *forkable.Cursor) Option {
-	return func(f *Firehose) {
-		f.cursor = cursor
 	}
 }
 
@@ -139,17 +132,7 @@ func (f *Firehose) setupPipeline(ctx context.Context) (bstream.Source, error) {
 		forkableOptions = append(forkableOptions, forkable.WithCustomLIBNumGetter(forkable.RelativeLIBNumGetter(f.confirmations)))
 	}
 
-	if f.cursor != nil {
-		startBlock = f.cursor.StartBlockNum()
-		fileStartBlock = startBlock
-		f.logger.Info("firehose pipeline bootstrapping from cursor",
-			zap.Uint64("start_block_num", startBlock),
-			zap.Uint64("file_start_block", fileStartBlock),
-		)
-		forkableOptions = append(forkableOptions, forkable.FromCursor(f.cursor))
-		joiningSourceOptions = append(joiningSourceOptions, bstream.JoiningSourceTargetBlockID(f.cursor.LIB.ID()))
-		handler = handlerFunc
-	} else if f.tracker != nil {
+	if f.tracker != nil {
 		f.logger.Info("resolving relative block", zap.Int64("start_block", f.startBlockNum))
 		startBlock, err = f.tracker.GetRelativeBlock(ctx, f.startBlockNum, bstream.BlockStreamHeadTarget)
 		if err != nil {

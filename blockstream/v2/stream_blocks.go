@@ -18,6 +18,16 @@ import (
 var errStopBlockReached = errors.New("stop block reached")
 
 func (s Server) runBlocks(ctx context.Context, handler bstream.Handler, request *pbbstream.BlocksRequestV2, logger *zap.Logger) error {
+	headInfo, err := s.resolveHeadInfo(ctx)
+	if err != nil {
+		return status.Errorf(codes.Unavailable, "resolving chain head: %s", err)
+	}
+
+	startBlockNum, err := classifyCursor(request, headInfo)
+	if err != nil {
+		return err // already gRPC-coded
+	}
+
 	var preprocFunc bstream.PreprocessFunc
 	if s.preprocFactory != nil {
 		pp, err := s.preprocFactory(request)
@@ -57,15 +67,6 @@ func (s Server) runBlocks(ctx context.Context, handler bstream.Handler, request 
 		options = append(options, firehose.WithConfirmations(request.Confirmations))
 	}
 
-	if request.StartCursor != "" {
-		cur, err := forkable.CursorFromOpaque(request.StartCursor)
-		if err != nil {
-			return status.Errorf(codes.InvalidArgument, "invalid start cursor %q: %s", request.StartCursor, err)
-		}
-
-		options = append(options, firehose.WithCursor(cur))
-	}
-
 	if s.liveSourceFactory != nil {
 		liveFactory := s.liveSourceFactory
 
@@ -78,9 +79,9 @@ func (s Server) runBlocks(ctx context.Context, handler bstream.Handler, request 
 		options = append(options, firehose.WithLiveSource(liveFactory, false))
 	}
 
-	fhose := firehose.New(fileSourceFactory, request.StartBlockNum, handler, options...)
+	fhose := firehose.New(fileSourceFactory, startBlockNum, handler, options...)
 
-	err := fhose.Run(ctx)
+	err = fhose.Run(ctx)
 	if err != nil {
 		if errors.Is(err, firehose.ErrStopBlockReached) {
 			logger.Info("stream of blocks reached end block")
@@ -143,6 +144,30 @@ func (s Server) Blocks(request *pbbstream.BlocksRequestV2, stream pbbstream.Bloc
 	})
 
 	return s.runBlocks(ctx, handlerFunc, request, logger)
+}
+
+// resolveHeadInfo fetches the chain head + LIB block numbers via the Server's
+// Tracker. Both BlockStreamHeadTarget + BlockStreamLIBTarget are registered
+// by dfuse-eosio's firehose-app wiring (cmd/dfuseeos/cli/firehose.go). If a
+// getter is missing, the corresponding field is left at 0 and the classifier
+// degrades to "no bounds check" for that dimension — preserves pre-classifier
+// behavior where unwired Trackers never gated requests on head/LIB.
+func (s Server) resolveHeadInfo(ctx context.Context) (HubHeadInfo, error) {
+	var info HubHeadInfo
+	if s.tracker == nil {
+		return info, nil
+	}
+	if headRef, err := s.tracker.Get(ctx, bstream.BlockStreamHeadTarget); err == nil && headRef != nil {
+		info.HeadNum = headRef.Num()
+	} else if err != nil && !errors.Is(err, bstream.ErrGetterUndefined) {
+		return info, fmt.Errorf("head target: %w", err)
+	}
+	if libRef, err := s.tracker.Get(ctx, bstream.BlockStreamLIBTarget); err == nil && libRef != nil {
+		info.LIBNum = libRef.Num()
+	} else if err != nil && !errors.Is(err, bstream.ErrGetterUndefined) {
+		return info, fmt.Errorf("lib target: %w", err)
+	}
+	return info, nil
 }
 
 func stepToProto(step forkable.StepType) pbbstream.ForkStep {
