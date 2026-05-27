@@ -109,11 +109,10 @@ func TestGoldenFile_StructuralInvariants(t *testing.T) {
 // across the captured sequence. Each STEP_IRREVERSIBLE response must carry a
 // distinct cursor (different block IDs ⇒ different encoded payloads).
 //
-// Note: this test asserts capture-file self-consistency, not server-replay
-// against captured tuples. A true behavior-equivalence-by-replay test is
-// tracked as DEFER-HF1-N1 in ROADMAP.md — the dummy-deploy soak (HF1 §Task 8)
-// covers replay at the integration level for HF1; a unit-test replay against
-// a header-only mock blocks store will be added before HF2 production rollout.
+// Note: this test asserts capture-file self-consistency. The companion
+// behavior-equivalence-by-replay test lives in golden_replay_test.go (closes
+// DEFER-HF1-N1) and the dummy-deploy 24h soak (HF1 §Task 8) covers the same
+// equivalence at the integration level.
 func TestGoldenFile_CursorUniqueness(t *testing.T) {
 	entries := loadGoldenJSONL(t, "testdata/golden-100blocks.jsonl")
 	require.NotEmpty(t, entries)
