@@ -1,6 +1,8 @@
 package blockstream
 
 import (
+	"math"
+
 	"github.com/streamingfast/bstream/forkable"
 	pbbstream "github.com/streamingfast/pbgo/dfuse/bstream/v1"
 	"google.golang.org/grpc/codes"
@@ -56,6 +58,14 @@ func classifyCursor(request *pbbstream.BlocksRequestV2, headInfo HubHeadInfo) (i
 	// blocks cannot reorg, so cursor.Block at-or-below LIB is canonical without
 	// any ID check.
 	if cur.Step == forkable.StepIrreversible {
+		// MaxUint64 guard: with HeadInfo unavailable (sentinel), the bounds
+		// checks below short-circuit; an adversarial MaxUint64 cursor would
+		// then overflow `Num()+1` to 0 and silently re-stream from genesis.
+		// Reject at the boundary instead. Finding P2-A1.
+		if cur.Block.Num() == math.MaxUint64 {
+			return 0, status.Errorf(codes.InvalidArgument,
+				"cursor block number overflow")
+		}
 		if headInfo.HeadNum > 0 && cur.Block.Num() > headInfo.HeadNum {
 			return 0, status.Errorf(codes.InvalidArgument,
 				"cursor block %d ahead of chain head %d",

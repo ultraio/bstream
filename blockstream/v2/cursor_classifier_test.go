@@ -163,7 +163,7 @@ func TestClassifyCursor_BoundaryTable(t *testing.T) {
 		{"irr cursor=lib-1", 10, 5, forkable.StepIrreversible, 0, 4, 5, codes.OK},
 		{"irr cursor=lib", 10, 5, forkable.StepIrreversible, 0, 5, 6, codes.OK},
 		{"irr cursor=lib+1 OutOfRange", 10, 5, forkable.StepIrreversible, 0, 6, 0, codes.OutOfRange},
-		{"irr cursor=head OutOfRange (because head>LIB)", 10, 5, forkable.StepIrreversible, 0, 10, 0, codes.OutOfRange},
+		{"irr cursor=head>LIB OutOfRange", 10, 5, forkable.StepIrreversible, 0, 10, 0, codes.OutOfRange},
 		{"irr cursor=head+1 InvalidArgument", 10, 5, forkable.StepIrreversible, 0, 11, 0, codes.InvalidArgument},
 		{"irr cursor head=lib (no rev distance), cursor=head", 10, 10, forkable.StepIrreversible, 0, 10, 11, codes.OK},
 		{"irr cursor head=lib, cursor=head+1 InvalidArgument", 10, 10, forkable.StepIrreversible, 0, 11, 0, codes.InvalidArgument},

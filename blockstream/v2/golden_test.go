@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	pbbstream "github.com/streamingfast/pbgo/dfuse/bstream/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -106,23 +105,19 @@ func TestGoldenFile_StructuralInvariants(t *testing.T) {
 	}
 }
 
-// TestGoldenFile_BehaviorEquivalence_ReplayContract documents the contract
-// that HF1 promises to HF2 + downstream: any request equivalent to the
-// captured one must produce the same (step, block_num) sequence and the same
-// opaque cursor encoding. Bytes of the Block payload may legitimately drift
-// over codec / proto evolution; the tuple sequence must not.
+// TestGoldenFile_CursorUniqueness asserts cursor opaque encoding uniqueness
+// across the captured sequence. Each STEP_IRREVERSIBLE response must carry a
+// distinct cursor (different block IDs ⇒ different encoded payloads).
 //
-// Concrete replay (capture-from-patched-firehose) is performed in the
-// dummy-deploy soak (HF1 §Task 8); this unit test asserts the contract by
-// re-deriving it from the golden file (single source of truth checked into
-// the repo).
-func TestGoldenFile_BehaviorEquivalence_ReplayContract(t *testing.T) {
+// Note: this test asserts capture-file self-consistency, not server-replay
+// against captured tuples. A true behavior-equivalence-by-replay test is
+// tracked as DEFER-HF1-N1 in ROADMAP.md — the dummy-deploy soak (HF1 §Task 8)
+// covers replay at the integration level for HF1; a unit-test replay against
+// a header-only mock blocks store will be added before HF2 production rollout.
+func TestGoldenFile_CursorUniqueness(t *testing.T) {
 	entries := loadGoldenJSONL(t, "testdata/golden-100blocks.jsonl")
 	require.NotEmpty(t, entries)
 
-	// Cursor opaque encoding must be a non-empty base-64 / opaque string
-	// matching forkable.Cursor.ToOpaque() output — we only assert non-empty +
-	// uniqueness here (forkable's own tests cover encoding correctness).
 	seen := make(map[string]int, len(entries))
 	for i, e := range entries {
 		if dup, ok := seen[e.Cursor]; ok {
@@ -131,7 +126,3 @@ func TestGoldenFile_BehaviorEquivalence_ReplayContract(t *testing.T) {
 		seen[e.Cursor] = i
 	}
 }
-
-// Ensure pbbstream import is exercised (linter satisfaction; pbbstream is
-// what the golden file is shaped against and is required by classifier tests).
-var _ = pbbstream.BlocksRequestV2{}

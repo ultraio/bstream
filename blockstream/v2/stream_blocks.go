@@ -149,23 +149,29 @@ func (s Server) Blocks(request *pbbstream.BlocksRequestV2, stream pbbstream.Bloc
 // resolveHeadInfo fetches the chain head + LIB block numbers via the Server's
 // Tracker. Both BlockStreamHeadTarget + BlockStreamLIBTarget are registered
 // by dfuse-eosio's firehose-app wiring (cmd/dfuseeos/cli/firehose.go). If a
-// getter is missing, the corresponding field is left at 0 and the classifier
-// degrades to "no bounds check" for that dimension — preserves pre-classifier
-// behavior where unwired Trackers never gated requests on head/LIB.
+// getter is missing OR a registered getter returns a transient error, the
+// corresponding field is left at 0 and the classifier degrades to "no bounds
+// check" for that dimension — preserves pre-classifier behavior where the
+// Tracker was only consulted later by firehose.New for relative-block-num
+// resolution and never gated requests on head/LIB at entry. Context-cancel
+// propagates as Unavailable up the stack via runBlocks's existing handling.
+// Finding P2-A3 + P3-A3.
 func (s Server) resolveHeadInfo(ctx context.Context) (HubHeadInfo, error) {
 	var info HubHeadInfo
 	if s.tracker == nil {
 		return info, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return info, err
+	}
 	if headRef, err := s.tracker.Get(ctx, bstream.BlockStreamHeadTarget); err == nil && headRef != nil {
 		info.HeadNum = headRef.Num()
-	} else if err != nil && !errors.Is(err, bstream.ErrGetterUndefined) {
-		return info, fmt.Errorf("head target: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return info, err
 	}
 	if libRef, err := s.tracker.Get(ctx, bstream.BlockStreamLIBTarget); err == nil && libRef != nil {
 		info.LIBNum = libRef.Num()
-	} else if err != nil && !errors.Is(err, bstream.ErrGetterUndefined) {
-		return info, fmt.Errorf("lib target: %w", err)
 	}
 	return info, nil
 }
