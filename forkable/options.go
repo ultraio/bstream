@@ -24,18 +24,6 @@ import (
 
 type Option func(f *Forkable)
 
-func FromCursor(cursor *Cursor) Option {
-	return func(f *Forkable) {
-
-		if cursor.IsEmpty() {
-			return
-		}
-
-		// this should simply gate until we see those specific cursor values
-		f.gateCursor = cursor
-	}
-}
-
 func WithCustomLIBNumGetter(getter LIBNumGetter) Option {
 	return func(f *Forkable) {
 		f.libnumGetter = getter
