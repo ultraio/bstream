@@ -285,8 +285,20 @@ func (p *Forkable) ProcessBlock(blk *bstream.Block, obj interface{}) error {
 	// the consumer restarts cleanly from its cursor instead of OOMing. Opt-in; tracks
 	// the real reversible window, so it only fires on a genuine stall.
 	if p.maxReversibleBlocks > 0 {
-		if n := p.forkDB.ReversibleBlockCount(); n > p.maxReversibleBlocks {
+		n := p.forkDB.ReversibleBlockCount()
+		if n > p.maxReversibleBlocks {
 			return fmt.Errorf("forkable reversible buffer exceeded cap of %d blocks (have %d): LIB likely stalled at %d while head is at %d; failing fast for a clean restart", p.maxReversibleBlocks, n, p.forkDB.LIBNum(), blk.Num())
+		}
+		// Soft alert: the buffer should track the small head-minus-LIB window. Crossing
+		// half the cap means it is growing abnormally (LIB likely stalling). Warn early
+		// (sampled) so SREs see it well before the hard fail-fast at the cap.
+		if n > p.maxReversibleBlocks/2 && blk.Number%600 == 0 {
+			p.logger.Warn("forkable reversible buffer is growing abnormally — LIB may be stalling (will fail fast at the cap to avoid OOM)",
+				zap.Int("reversible_blocks", n),
+				zap.Int("cap", p.maxReversibleBlocks),
+				zap.Uint64("lib_num", p.forkDB.LIBNum()),
+				zap.Uint64("head_num", blk.Num()),
+			)
 		}
 	}
 
