@@ -36,6 +36,20 @@ func WithLogger(logger *zap.Logger) Option {
 	}
 }
 
+// WithMaxReversibleBlocks bounds the ForkDB reversible buffer. Eviction is
+// LIB-driven (MoveLIB) only, so if chain LIB stalls while head keeps advancing
+// the buffer grows without bound (OOM — the structural twin of the deleted
+// gateCursor blowup). When the buffer exceeds max, ProcessBlock fails fast with
+// an error so the consumer restarts cleanly from its cursor instead of OOMing.
+// 0 (the default) disables the cap. Set it far above the normal reversible
+// window (which tracks head-minus-LIB); it should only ever fire on a genuine
+// LIB stall. Consumers that pin LIB to head (RelativeLIBNumGetter) never hit it.
+func WithMaxReversibleBlocks(max int) Option {
+	return func(f *Forkable) {
+		f.maxReversibleBlocks = max
+	}
+}
+
 func WithInclusiveLIB(irreversibleBlock bstream.BlockRef) Option {
 	return func(f *Forkable) {
 		f.includeInitialLIB = true
