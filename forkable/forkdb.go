@@ -184,6 +184,17 @@ func (f *ForkDB) Exists(blockID string) bool {
 	return f.links[blockID] != ""
 }
 
+// ReversibleBlockCount returns the number of blocks currently held in the
+// reversible buffer (links not yet purged below LIB). Eviction is LIB-driven
+// (MoveLIB) only, so this grows unbounded if LIB stalls — callers can use it to
+// bound memory (see Forkable's WithMaxReversibleBlocks).
+func (f *ForkDB) ReversibleBlockCount() int {
+	f.linksLock.Lock()
+	defer f.linksLock.Unlock()
+
+	return len(f.links)
+}
+
 func (f *ForkDB) AddLink(blockRef, previousRef bstream.BlockRef, obj interface{}) (exists bool) {
 	f.linksLock.Lock()
 	defer f.linksLock.Unlock()

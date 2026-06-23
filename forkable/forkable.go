@@ -44,6 +44,10 @@ type Forkable struct {
 
 	lastLongestChain []*Block
 	libnumGetter     LIBNumGetter
+
+	// maxReversibleBlocks, when > 0, caps the ForkDB reversible buffer; exceeding it
+	// (a LIB stall) makes ProcessBlock fail fast for a clean restart. See WithMaxReversibleBlocks.
+	maxReversibleBlocks int
 }
 
 // custom way to extract LIB num from a block and forkDB. forkDB may be nil.
@@ -273,6 +277,17 @@ func (p *Forkable) ProcessBlock(blk *bstream.Block, obj interface{}) error {
 	previousRef := bstream.NewBlockRef(blk.PreviousID(), blk.Num()-1)
 	if exists := p.forkDB.AddLink(blk, previousRef, ppBlk); exists {
 		return nil
+	}
+
+	// Bound the reversible buffer. AddLink just grew it; eviction (MoveLIB) only
+	// happens later in this method, and only when LIB advances — so on a LIB stall
+	// the buffer grows unbounded (the gateCursor blowup's twin). Fail fast here so
+	// the consumer restarts cleanly from its cursor instead of OOMing. Opt-in; tracks
+	// the real reversible window, so it only fires on a genuine stall.
+	if p.maxReversibleBlocks > 0 {
+		if n := p.forkDB.ReversibleBlockCount(); n > p.maxReversibleBlocks {
+			return fmt.Errorf("forkable reversible buffer exceeded cap of %d blocks (have %d): LIB likely stalled at %d while head is at %d; failing fast for a clean restart", p.maxReversibleBlocks, n, p.forkDB.LIBNum(), blk.Num())
+		}
 	}
 
 	if !p.forkDB.HasLIB() { // always skip processing until LIB is set
